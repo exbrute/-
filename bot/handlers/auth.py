@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from aiogram import F, Router
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, Message
@@ -97,6 +98,11 @@ async def _send_welcome(message: Message, state: FSMContext, settings: Settings)
         parse_mode="Markdown",
         reply_markup=main_keyboard(),
     )
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext, settings: Settings) -> None:
+    await _send_welcome(message, state, settings)
 
 
 async def _begin_verification(
@@ -362,10 +368,3 @@ async def _finish_login(
 async def _cleanup_pending(uid: int) -> None:
     pending = _pending.pop(uid, None)
     await disconnect_quiet(pending.client if pending else None)
-
-
-@router.message(F.state(None), F.text, ~F.text.in_(MENU_BUTTON_TEXTS))
-async def on_idle_message(
-    message: Message, state: FSMContext, settings: Settings
-) -> None:
-    await _send_welcome(message, state, settings)
