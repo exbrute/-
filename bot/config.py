@@ -12,6 +12,8 @@ class Settings:
     api_id: int
     api_hash: str
     sessions_dir: str
+    tdata_dir: str
+    data_dir: str
 
 
 def load_settings() -> Settings:
@@ -19,6 +21,8 @@ def load_settings() -> Settings:
     api_id_raw = os.getenv("API_ID", "").strip()
     api_hash = os.getenv("API_HASH", "").strip()
     sessions_dir = os.getenv("SESSIONS_DIR", "sessions").strip() or "sessions"
+    tdata_dir = os.getenv("TDATA_DIR", "tdata").strip() or "tdata"
+    data_dir = os.getenv("DATA_DIR", "data").strip() or "data"
 
     missing = []
     if not token:
@@ -37,4 +41,6 @@ def load_settings() -> Settings:
         api_id=int(api_id_raw),
         api_hash=api_hash,
         sessions_dir=sessions_dir,
+        tdata_dir=tdata_dir,
+        data_dir=data_dir,
     )

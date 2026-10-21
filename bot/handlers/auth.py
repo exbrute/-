@@ -17,11 +17,14 @@ from bot.session_auth import (
     complete_password,
     disconnect_quiet,
     finalize_login,
-    remove_user_artifacts,
+    normalize_phone,
+    phone_slug,
+    remove_phone_artifacts,
     session_file_path,
     start_login,
-    tdata_dir_path,
+    tdata_account_dir,
 )
+from bot.user_store import clear_linked_phone, get_linked_phone, set_linked_phone
 
 router = Router(name="auth")
 
@@ -36,7 +39,7 @@ class LoginStates(StatesGroup):
 
 def _help_lines(has_session: bool) -> str:
     lines = [
-        "/login — войти заново (удалит старые `.session` и `tdata`)",
+        "/login — войти заново (удалит старые файлы этого номера)",
         "/session — скачать `.session` (Telethon)",
         "/tdata — скачать `tdata` архивом zip",
         "/cancel — отменить текущий вход",
@@ -50,31 +53,38 @@ def _help_lines(has_session: bool) -> str:
     )
 
 
+def _resolve_phone(settings: Settings, uid: int, pending: PendingLogin | None) -> str | None:
+    if pending:
+        return pending.phone
+    return get_linked_phone(settings.data_dir, uid)
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, settings: Settings) -> None:
     await state.clear()
     uid = message.from_user.id if message.from_user else 0
     await _cleanup_pending(uid)
 
-    session = session_file_path(settings.sessions_dir, uid)
-    tdata = tdata_dir_path(settings.sessions_dir, uid)
-    has_session = session.is_file()
-
-    if has_session:
-        tdata_note = "есть" if tdata.is_dir() else "нет (только `.session`)"
+    phone = get_linked_phone(settings.data_dir, uid)
+    if phone:
+        session = session_file_path(settings.sessions_dir, phone)
+        tdata = tdata_account_dir(settings.tdata_dir, phone)
+        tdata_note = "есть" if tdata.is_dir() else "нет"
         await message.answer(
-            "Привет! Для твоего аккаунта бота уже сохранены артефакты входа.\n\n"
+            "Привет! Для твоего последнего входа сохранены артефакты.\n\n"
+            f"• Номер: `{phone}`\n"
             f"• `{session.name}`\n"
-            f"• `tdata`: {tdata_note}\n\n"
+            f"• `tdata/{phone_slug(phone)}/`: {tdata_note}\n\n"
             + _help_lines(True),
             parse_mode="Markdown",
         )
         return
 
     await message.answer(
-        "Привет! **Демо-бот**: вход в **свой Telegram-аккаунт** и сохранение на сервере:\n"
-        "• **`*.session`** — Telethon\n"
-        "• **`tdata`** — формат Telegram Desktop (через opentele)\n\n"
+        "Привет! **Демо-бот**: вход в **свой Telegram-аккаунт**.\n"
+        "Файлы подписываются **номером телефона**:\n"
+        "• `sessions/<номер>.session`\n"
+        "• `tdata/<номер>/` — отдельная папка tdata\n\n"
         + _help_lines(False)
         + "\n\n⚠️ `.session` и `tdata` дают полный доступ к аккаунту. Только для обучения.",
         parse_mode="Markdown",
@@ -94,7 +104,12 @@ async def cmd_login(message: Message, state: FSMContext, settings: Settings) -> 
     uid = message.from_user.id if message.from_user else 0
     await state.clear()
     await _cleanup_pending(uid)
-    remove_user_artifacts(settings.sessions_dir, uid)
+
+    old_phone = get_linked_phone(settings.data_dir, uid)
+    if old_phone:
+        remove_phone_artifacts(settings.sessions_dir, settings.tdata_dir, old_phone)
+    clear_linked_phone(settings.data_dir, uid)
+
     await state.set_state(LoginStates.phone)
     await message.answer(
         "Отправь номер телефона аккаунта Telegram (с `+` и кодом страны)."
@@ -110,7 +125,7 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
             settings.api_id,
             settings.api_hash,
             settings.sessions_dir,
-            uid,
+            settings.tdata_dir,
             message.text or "",
         )
     except ValueError as e:
@@ -118,9 +133,12 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
         return
     except RuntimeError as e:
         if str(e) == "already_authorized":
-            session = session_file_path(settings.sessions_dir, uid)
+            phone = normalize_phone(message.text or "")
+            session = session_file_path(settings.sessions_dir, phone)
+            set_linked_phone(settings.data_dir, uid, phone)
             await message.answer(
-                f"Сессия уже есть: `{session.name}`. /session, /tdata или /login.",
+                f"Сессия для `{phone}` уже есть: `{session.name}`.\n"
+                "/session, /tdata или /login.",
                 parse_mode="Markdown",
             )
             await state.clear()
@@ -130,8 +148,9 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
     _pending[uid] = pending
     await state.set_state(LoginStates.code)
     await message.answer(
-        "Код отправлен в Telegram (приложение или SMS).\n"
-        "Пришли код одним сообщением (можно с пробелами)."
+        f"Код отправлен на `{pending.phone}`.\n"
+        "Пришли код одним сообщением (можно с пробелами).",
+        parse_mode="Markdown",
     )
 
 
@@ -190,13 +209,18 @@ async def on_password(
 @router.message(Command("session"))
 async def cmd_session(message: Message, settings: Settings) -> None:
     uid = message.from_user.id if message.from_user else 0
-    path = session_file_path(settings.sessions_dir, uid)
+    phone = _resolve_phone(settings, uid, _pending.get(uid))
+    if not phone:
+        await message.answer("Сначала /login — номер телефона ещё не привязан.")
+        return
+
+    path = session_file_path(settings.sessions_dir, phone)
     if not path.is_file():
-        await message.answer("Файла `.session` ещё нет. Сначала /login")
+        await message.answer("Файла `.session` для этого номера ещё нет. Сначала /login")
         return
     await message.answer_document(
         FSInputFile(path),
-        caption=f"Telethon session: `{path.name}`",
+        caption=f"Telethon session `{path.name}` — {phone}",
         parse_mode="Markdown",
     )
 
@@ -204,17 +228,25 @@ async def cmd_session(message: Message, settings: Settings) -> None:
 @router.message(Command("tdata"))
 async def cmd_tdata(message: Message, settings: Settings) -> None:
     uid = message.from_user.id if message.from_user else 0
-    tdata = tdata_dir_path(settings.sessions_dir, uid)
-    if not tdata.is_dir():
-        await message.answer("Папки `tdata` ещё нет. Сначала /login")
+    phone = _resolve_phone(settings, uid, _pending.get(uid))
+    if not phone:
+        await message.answer("Сначала /login — номер телефона ещё не привязан.")
         return
 
+    tdata = tdata_account_dir(settings.tdata_dir, phone)
+    if not tdata.is_dir():
+        await message.answer("Папки `tdata` для этого номера ещё нет. Сначала /login")
+        return
+
+    slug = phone_slug(phone)
     with tempfile.TemporaryDirectory() as tmp:
-        archive_base = Path(tmp) / f"{tdata.name}"
-        zip_path = shutil.make_archive(str(archive_base), "zip", root_dir=tdata.parent, base_dir=tdata.name)
+        archive_base = Path(tmp) / f"{slug}_tdata"
+        zip_path = shutil.make_archive(
+            str(archive_base), "zip", root_dir=tdata.parent, base_dir=tdata.name
+        )
         await message.answer_document(
             FSInputFile(zip_path),
-            caption="Каталог `tdata` (Telegram Desktop). Распакуй и положи рядом с Telegram.exe.",
+            caption=f"`tdata` для {phone} — распакуй в профиль Telegram Desktop.",
             parse_mode="Markdown",
         )
 
@@ -228,11 +260,14 @@ async def _finish_login(
         await message.answer("Сессия входа истекла. Начни с /login")
         return
 
-    await message.answer("Вход успешен, сохраняю `.session` и `tdata`…")
+    await message.answer(
+        f"Вход на `{pending.phone}` успешен, сохраняю `.session` и `tdata`…",
+        parse_mode="Markdown",
+    )
 
     try:
         session_path, tdata_path = await finalize_login(
-            pending, settings.sessions_dir, uid
+            pending, settings.sessions_dir, settings.tdata_dir
         )
     except Exception as exc:
         await disconnect_quiet(pending.client)
@@ -244,11 +279,13 @@ async def _finish_login(
         )
         return
 
+    set_linked_phone(settings.data_dir, uid, pending.phone)
     await state.clear()
     await message.answer(
         "Готово.\n\n"
-        f"• `{session_path.name}`\n"
-        f"• `{tdata_path.name}/` (tdata)\n\n"
+        f"• Номер: `{pending.phone}`\n"
+        f"• `sessions/{session_path.name}`\n"
+        f"• `tdata/{tdata_path.name}/`\n\n"
         "/session — файл сессии\n"
         "/tdata — zip с tdata",
         parse_mode="Markdown",

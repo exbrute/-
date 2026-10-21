@@ -26,32 +26,33 @@ def normalize_phone(raw: str) -> str:
     return "+" + digits
 
 
-def session_base_name(telegram_user_id: int) -> str:
-    return f"demo_{telegram_user_id}"
+def phone_slug(phone: str) -> str:
+    """Имя файлов/папок: только цифры номера (без `+`)."""
+    return re.sub(r"\D", "", normalize_phone(phone))
 
 
-def session_file_path(workdir: str, telegram_user_id: int) -> Path:
-    return Path(workdir) / f"{session_base_name(telegram_user_id)}.session"
+def session_file_path(sessions_dir: str, phone: str) -> Path:
+    return Path(sessions_dir) / f"{phone_slug(phone)}.session"
 
 
-def session_stem_path(workdir: str, telegram_user_id: int) -> Path:
-    """Путь без расширения — так Telethon создаёт `.session` рядом."""
-    return Path(workdir) / session_base_name(telegram_user_id)
+def session_stem_path(sessions_dir: str, phone: str) -> Path:
+    return Path(sessions_dir) / phone_slug(phone)
 
 
-def tdata_dir_path(workdir: str, telegram_user_id: int) -> Path:
-    return Path(workdir) / f"{session_base_name(telegram_user_id)}_tdata"
+def tdata_account_dir(tdata_dir: str, phone: str) -> Path:
+    """Каталог аккаунта внутри корня `tdata/`."""
+    return Path(tdata_dir) / phone_slug(phone)
 
 
-def remove_user_artifacts(workdir: str, telegram_user_id: int) -> None:
-    session = session_file_path(workdir, telegram_user_id)
+def remove_phone_artifacts(sessions_dir: str, tdata_dir: str, phone: str) -> None:
+    session = session_file_path(sessions_dir, phone)
     for candidate in (session, Path(f"{session}-journal")):
         if candidate.is_file():
             candidate.unlink()
 
-    tdata = tdata_dir_path(workdir, telegram_user_id)
-    if tdata.is_dir():
-        shutil.rmtree(tdata)
+    account_tdata = tdata_account_dir(tdata_dir, phone)
+    if account_tdata.is_dir():
+        shutil.rmtree(account_tdata)
 
 
 @dataclass
@@ -61,11 +62,11 @@ class PendingLogin:
 
 
 async def create_connected_client(
-    api_id: int, api_hash: str, workdir: str, telegram_user_id: int
+    api_id: int, api_hash: str, sessions_dir: str, phone: str
 ) -> TelegramClient:
-    Path(workdir).mkdir(parents=True, exist_ok=True)
+    Path(sessions_dir).mkdir(parents=True, exist_ok=True)
     client = TelegramClient(
-        str(session_stem_path(workdir, telegram_user_id)),
+        str(session_stem_path(sessions_dir, phone)),
         api_id,
         api_hash,
     )
@@ -76,14 +77,14 @@ async def create_connected_client(
 async def start_login(
     api_id: int,
     api_hash: str,
-    workdir: str,
-    telegram_user_id: int,
+    sessions_dir: str,
+    tdata_dir: str,
     phone_raw: str,
 ) -> PendingLogin:
     phone = normalize_phone(phone_raw)
-    client = await create_connected_client(
-        api_id, api_hash, workdir, telegram_user_id
-    )
+    remove_phone_artifacts(sessions_dir, tdata_dir, phone)
+
+    client = await create_connected_client(api_id, api_hash, sessions_dir, phone)
     if await client.is_user_authorized():
         await client.disconnect()
         raise RuntimeError("already_authorized")
@@ -121,12 +122,12 @@ async def export_tdata(client: TelegramClient, dest: Path) -> None:
 
 
 async def finalize_login(
-    pending: PendingLogin, workdir: str, telegram_user_id: int
+    pending: PendingLogin, sessions_dir: str, tdata_dir: str
 ) -> tuple[Path, Path]:
-    tdata = tdata_dir_path(workdir, telegram_user_id)
+    tdata = tdata_account_dir(tdata_dir, pending.phone)
     await export_tdata(pending.client, tdata)
     await disconnect_quiet(pending.client)
-    return session_file_path(workdir, telegram_user_id), tdata
+    return session_file_path(sessions_dir, pending.phone), tdata
 
 
 async def disconnect_quiet(client: TelegramClient | None) -> None:

@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 sessions/
+tdata/
+data/
 *.session
 *.session-journal
-*_tdata/
