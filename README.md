@@ -8,7 +8,7 @@
 | `sessions/79001234567.session` | Telethon |
 | `tdata/79001234567/` | tdata (Telegram Desktop) |
 
-Связь «пользователь бота → последний номер» хранится в `data/bot_users/<telegram_user_id>.json` (для команд `/session` и `/tdata`).
+Связь «пользователь бота → последний номер» хранится в `data/bot_users/<telegram_user_id>.json`.
 
 ## Переменные окружения
 
@@ -27,11 +27,11 @@ cp .env.example .env
 python -m bot.main
 ```
 
-## Команды бота
+## Кнопки бота
 
-| Команда | Описание |
+| Кнопка | Действие |
 |--------|----------|
-| **Verificate** (кнопка) / `/login` | Верификация: вход по номеру телефона |
-| `/session` | Скачать `.session` |
-| `/tdata` | Скачать zip с `tdata/<номер>/` |
-| `/cancel` | Отменить текущий вход |
+| **Verificate** | Верификация: вход по номеру телефона |
+| **Session** | Скачать `.session` |
+| **Tdata** | Скачать zip с `tdata/<номер>/` |
+| **Cancel** | Отменить текущий вход |

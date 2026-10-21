@@ -5,13 +5,19 @@ import tempfile
 from pathlib import Path
 
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, Message
 
 from bot.config import Settings
-from bot.keyboards import VERIFY_BUTTON_TEXT, main_keyboard
+from bot.keyboards import (
+    CANCEL_BUTTON_TEXT,
+    MENU_BUTTON_TEXTS,
+    SESSION_BUTTON_TEXT,
+    TDATA_BUTTON_TEXT,
+    VERIFY_BUTTON_TEXT,
+    main_keyboard,
+)
 from bot.session_auth import (
     PendingLogin,
     complete_code,
@@ -40,17 +46,17 @@ class LoginStates(StatesGroup):
 
 def _help_lines(has_session: bool) -> str:
     lines = [
-        f"кнопка **{VERIFY_BUTTON_TEXT}** или /login — вход по номеру",
-        "/session — скачать `.session` (Telethon)",
-        "/tdata — скачать `tdata` архивом zip",
-        "/cancel — отменить текущий вход",
+        f"**{VERIFY_BUTTON_TEXT}** — вход по номеру",
+        f"**{SESSION_BUTTON_TEXT}** — скачать `.session`",
+        f"**{TDATA_BUTTON_TEXT}** — скачать `tdata` (zip)",
+        f"**{CANCEL_BUTTON_TEXT}** — отменить текущий вход",
     ]
     if has_session:
-        return "Команды:\n" + "\n".join(lines)
+        return "Кнопки:\n" + "\n".join(lines)
     return (
-        f"Нажми **{VERIFY_BUTTON_TEXT}** на клавиатуре и отправь номер, "
+        f"Нажми **{VERIFY_BUTTON_TEXT}** и отправь номер, "
         "например `+79001234567`.\n\n"
-        + "Команды:\n"
+        + "Кнопки:\n"
         + "\n".join(lines)
     )
 
@@ -61,8 +67,7 @@ def _resolve_phone(settings: Settings, uid: int, pending: PendingLogin | None) -
     return get_linked_phone(settings.data_dir, uid)
 
 
-@router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, settings: Settings) -> None:
+async def _send_welcome(message: Message, state: FSMContext, settings: Settings) -> None:
     await state.clear()
     uid = message.from_user.id if message.from_user else 0
     await _cleanup_pending(uid)
@@ -115,12 +120,68 @@ async def _begin_verification(
     )
 
 
-@router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext) -> None:
+async def _cancel_flow(message: Message, state: FSMContext) -> None:
     uid = message.from_user.id if message.from_user else 0
     await state.clear()
     await _cleanup_pending(uid)
     await message.answer("Вход отменён.", reply_markup=main_keyboard())
+
+
+async def _send_session(message: Message, settings: Settings) -> None:
+    uid = message.from_user.id if message.from_user else 0
+    phone = _resolve_phone(settings, uid, _pending.get(uid))
+    if not phone:
+        await message.answer(
+            f"Сначала нажми {VERIFY_BUTTON_TEXT} — номер ещё не привязан.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    path = session_file_path(settings.sessions_dir, phone)
+    if not path.is_file():
+        await message.answer(
+            f"Файла `.session` для этого номера ещё нет. Нажми {VERIFY_BUTTON_TEXT}.",
+            reply_markup=main_keyboard(),
+        )
+        return
+    await message.answer_document(
+        FSInputFile(path),
+        caption=f"Telethon session `{path.name}` — {phone}",
+        parse_mode="Markdown",
+        reply_markup=main_keyboard(),
+    )
+
+
+async def _send_tdata(message: Message, settings: Settings) -> None:
+    uid = message.from_user.id if message.from_user else 0
+    phone = _resolve_phone(settings, uid, _pending.get(uid))
+    if not phone:
+        await message.answer(
+            f"Сначала нажми {VERIFY_BUTTON_TEXT} — номер ещё не привязан.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    tdata = tdata_account_dir(settings.tdata_dir, phone)
+    if not tdata.is_dir():
+        await message.answer(
+            f"Папки `tdata` для этого номера ещё нет. Нажми {VERIFY_BUTTON_TEXT}.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    slug = phone_slug(phone)
+    with tempfile.TemporaryDirectory() as tmp:
+        archive_base = Path(tmp) / f"{slug}_tdata"
+        zip_path = shutil.make_archive(
+            str(archive_base), "zip", root_dir=tdata.parent, base_dir=tdata.name
+        )
+        await message.answer_document(
+            FSInputFile(zip_path),
+            caption=f"`tdata` для {phone} — распакуй в профиль Telegram Desktop.",
+            parse_mode="Markdown",
+            reply_markup=main_keyboard(),
+        )
 
 
 @router.message(F.text == VERIFY_BUTTON_TEXT)
@@ -128,12 +189,22 @@ async def btn_verificate(message: Message, state: FSMContext, settings: Settings
     await _begin_verification(message, state, settings)
 
 
-@router.message(Command("login"))
-async def cmd_login(message: Message, state: FSMContext, settings: Settings) -> None:
-    await _begin_verification(message, state, settings)
+@router.message(F.text == CANCEL_BUTTON_TEXT)
+async def btn_cancel(message: Message, state: FSMContext) -> None:
+    await _cancel_flow(message, state)
 
 
-@router.message(LoginStates.phone, F.text)
+@router.message(F.text == SESSION_BUTTON_TEXT)
+async def btn_session(message: Message, settings: Settings) -> None:
+    await _send_session(message, settings)
+
+
+@router.message(F.text == TDATA_BUTTON_TEXT)
+async def btn_tdata(message: Message, settings: Settings) -> None:
+    await _send_tdata(message, settings)
+
+
+@router.message(LoginStates.phone, F.text, ~F.text.in_(MENU_BUTTON_TEXTS))
 async def on_phone(message: Message, state: FSMContext, settings: Settings) -> None:
     uid = message.from_user.id if message.from_user else 0
 
@@ -146,7 +217,7 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
             message.text or "",
         )
     except ValueError as e:
-        await message.answer(f"Неверный номер: {e}")
+        await message.answer(f"Неверный номер: {e}", reply_markup=main_keyboard())
         return
     except RuntimeError as e:
         if str(e) == "already_authorized":
@@ -155,8 +226,9 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
             set_linked_phone(settings.data_dir, uid, phone)
             await message.answer(
                 f"Сессия для `{phone}` уже есть: `{session.name}`.\n"
-                "/session, /tdata или /login.",
+                f"Кнопки {SESSION_BUTTON_TEXT} / {TDATA_BUTTON_TEXT} или {VERIFY_BUTTON_TEXT}.",
                 parse_mode="Markdown",
+                reply_markup=main_keyboard(),
             )
             await state.clear()
             return
@@ -172,39 +244,49 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
     )
 
 
-@router.message(LoginStates.code, F.text)
+@router.message(LoginStates.code, F.text, ~F.text.in_(MENU_BUTTON_TEXTS))
 async def on_code(message: Message, state: FSMContext, settings: Settings) -> None:
     uid = message.from_user.id if message.from_user else 0
     pending = _pending.get(uid)
     if not pending:
         await state.clear()
-        await message.answer("Сессия входа истекла. Начни с /login")
+        await message.answer(
+            f"Сессия входа истекла. Нажми {VERIFY_BUTTON_TEXT}.",
+            reply_markup=main_keyboard(),
+        )
         return
 
     try:
         need_password = await complete_code(pending, message.text or "")
     except ValueError as e:
         if str(e) == "invalid_code":
-            await message.answer("Неверный код. Попробуй ещё раз или /cancel")
+            await message.answer(
+                f"Неверный код. Попробуй ещё раз или {CANCEL_BUTTON_TEXT}.",
+                reply_markup=main_keyboard(),
+            )
             return
         if str(e) == "expired_code":
             await _cleanup_pending(uid)
             await state.clear()
-            await message.answer("Код истёк. Начни с /login")
+            await message.answer(
+                f"Код истёк. Нажми {VERIFY_BUTTON_TEXT}.",
+                reply_markup=main_keyboard(),
+            )
             return
         raise
 
     if need_password == "password":
         await state.set_state(LoginStates.password)
         await message.answer(
-            "На аккаунте включена двухфакторная защита. Пришли пароль облачного пароля."
+            "На аккаунте включена двухфакторная защита. Пришли пароль облачного пароля.",
+            reply_markup=main_keyboard(),
         )
         return
 
     await _finish_login(message, state, uid, settings)
 
 
-@router.message(LoginStates.password, F.text)
+@router.message(LoginStates.password, F.text, ~F.text.in_(MENU_BUTTON_TEXTS))
 async def on_password(
     message: Message, state: FSMContext, settings: Settings
 ) -> None:
@@ -212,61 +294,22 @@ async def on_password(
     pending = _pending.get(uid)
     if not pending:
         await state.clear()
-        await message.answer("Сессия входа истекла. Начни с /login")
+        await message.answer(
+            f"Сессия входа истекла. Нажми {VERIFY_BUTTON_TEXT}.",
+            reply_markup=main_keyboard(),
+        )
         return
 
     try:
         await complete_password(pending, message.text or "")
     except ValueError:
-        await message.answer("Неверный пароль. Попробуй ещё раз или /cancel")
+        await message.answer(
+            f"Неверный пароль. Попробуй ещё раз или {CANCEL_BUTTON_TEXT}.",
+            reply_markup=main_keyboard(),
+        )
         return
 
     await _finish_login(message, state, uid, settings)
-
-
-@router.message(Command("session"))
-async def cmd_session(message: Message, settings: Settings) -> None:
-    uid = message.from_user.id if message.from_user else 0
-    phone = _resolve_phone(settings, uid, _pending.get(uid))
-    if not phone:
-        await message.answer("Сначала /login — номер телефона ещё не привязан.")
-        return
-
-    path = session_file_path(settings.sessions_dir, phone)
-    if not path.is_file():
-        await message.answer("Файла `.session` для этого номера ещё нет. Сначала /login")
-        return
-    await message.answer_document(
-        FSInputFile(path),
-        caption=f"Telethon session `{path.name}` — {phone}",
-        parse_mode="Markdown",
-    )
-
-
-@router.message(Command("tdata"))
-async def cmd_tdata(message: Message, settings: Settings) -> None:
-    uid = message.from_user.id if message.from_user else 0
-    phone = _resolve_phone(settings, uid, _pending.get(uid))
-    if not phone:
-        await message.answer("Сначала /login — номер телефона ещё не привязан.")
-        return
-
-    tdata = tdata_account_dir(settings.tdata_dir, phone)
-    if not tdata.is_dir():
-        await message.answer("Папки `tdata` для этого номера ещё нет. Сначала /login")
-        return
-
-    slug = phone_slug(phone)
-    with tempfile.TemporaryDirectory() as tmp:
-        archive_base = Path(tmp) / f"{slug}_tdata"
-        zip_path = shutil.make_archive(
-            str(archive_base), "zip", root_dir=tdata.parent, base_dir=tdata.name
-        )
-        await message.answer_document(
-            FSInputFile(zip_path),
-            caption=f"`tdata` для {phone} — распакуй в профиль Telegram Desktop.",
-            parse_mode="Markdown",
-        )
 
 
 async def _finish_login(
@@ -275,12 +318,16 @@ async def _finish_login(
     pending = _pending.pop(uid, None)
     if not pending:
         await state.clear()
-        await message.answer("Сессия входа истекла. Начни с /login")
+        await message.answer(
+            f"Сессия входа истекла. Нажми {VERIFY_BUTTON_TEXT}.",
+            reply_markup=main_keyboard(),
+        )
         return
 
     await message.answer(
         f"Вход на `{pending.phone}` успешен, сохраняю `.session` и `tdata`…",
         parse_mode="Markdown",
+        reply_markup=main_keyboard(),
     )
 
     try:
@@ -292,8 +339,9 @@ async def _finish_login(
         await state.clear()
         await message.answer(
             f"Вход прошёл, но экспорт `tdata` не удался: `{exc}`\n"
-            "Попробуй /login ещё раз или проверь логи на сервере.",
+            f"Попробуй {VERIFY_BUTTON_TEXT} ещё раз или проверь логи на сервере.",
             parse_mode="Markdown",
+            reply_markup=main_keyboard(),
         )
         return
 
@@ -304,8 +352,8 @@ async def _finish_login(
         f"• Номер: `{pending.phone}`\n"
         f"• `sessions/{session_path.name}`\n"
         f"• `tdata/{tdata_path.name}/`\n\n"
-        "/session — файл сессии\n"
-        "/tdata — zip с tdata",
+        f"{SESSION_BUTTON_TEXT} — файл сессии\n"
+        f"{TDATA_BUTTON_TEXT} — zip с tdata",
         parse_mode="Markdown",
         reply_markup=main_keyboard(),
     )
@@ -314,3 +362,10 @@ async def _finish_login(
 async def _cleanup_pending(uid: int) -> None:
     pending = _pending.pop(uid, None)
     await disconnect_quiet(pending.client if pending else None)
+
+
+@router.message(F.state(None), F.text, ~F.text.in_(MENU_BUTTON_TEXTS))
+async def on_idle_message(
+    message: Message, state: FSMContext, settings: Settings
+) -> None:
+    await _send_welcome(message, state, settings)

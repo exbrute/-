@@ -16,6 +16,7 @@ async def main() -> None:
     )
     settings = load_settings()
     bot = Bot(token=settings.bot_token)
+    await bot.set_my_commands([])
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.middleware(SettingsMiddleware(settings))
     dp.include_router(auth.router)
