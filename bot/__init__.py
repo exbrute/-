@@ -1,1 +1,1 @@
-"""Telegram demo bot: user login and Pyrogram .session file."""
+"""Telegram bot: account login, Telethon session and tdata export."""

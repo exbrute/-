@@ -84,12 +84,11 @@ async def cmd_start(message: Message, state: FSMContext, settings: Settings) -> 
         return
 
     await message.answer(
-        "Привет! **Демо-бот**: вход в **свой Telegram-аккаунт**.\n"
-        "Файлы подписываются **номером телефона**:\n"
+        "Привет! Вход в Telegram-аккаунт по номеру телефона.\n"
+        "Файлы сохраняются по **номеру**:\n"
         "• `sessions/<номер>.session`\n"
-        "• `tdata/<номер>/` — отдельная папка tdata\n\n"
-        + _help_lines(False)
-        + "\n\n⚠️ `.session` и `tdata` дают полный доступ к аккаунту. Только для обучения.",
+        "• `tdata/<номер>/`\n\n"
+        + _help_lines(False),
         parse_mode="Markdown",
         reply_markup=main_keyboard(),
     )
