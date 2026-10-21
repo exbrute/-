@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 
 from aiogram import F, Router
@@ -14,8 +16,11 @@ from bot.session_auth import (
     complete_code,
     complete_password,
     disconnect_quiet,
+    finalize_login,
+    remove_user_artifacts,
     session_file_path,
     start_login,
+    tdata_dir_path,
 )
 
 router = Router(name="auth")
@@ -29,11 +34,20 @@ class LoginStates(StatesGroup):
     password = State()
 
 
-def _remove_session_files(settings: Settings, telegram_user_id: int) -> None:
-    path = session_file_path(settings.sessions_dir, telegram_user_id)
-    for candidate in (path, Path(f"{path}-journal")):
-        if candidate.is_file():
-            candidate.unlink()
+def _help_lines(has_session: bool) -> str:
+    lines = [
+        "/login — войти заново (удалит старые `.session` и `tdata`)",
+        "/session — скачать `.session` (Telethon)",
+        "/tdata — скачать `tdata` архивом zip",
+        "/cancel — отменить текущий вход",
+    ]
+    if has_session:
+        return "Команды:\n" + "\n".join(lines)
+    return (
+        "Нажми /login и отправь номер телефона, например `+79001234567`.\n\n"
+        + "Команды:\n"
+        + "\n".join(lines)
+    )
 
 
 @router.message(CommandStart())
@@ -42,27 +56,27 @@ async def cmd_start(message: Message, state: FSMContext, settings: Settings) -> 
     uid = message.from_user.id if message.from_user else 0
     await _cleanup_pending(uid)
 
-    path = session_file_path(settings.sessions_dir, uid)
+    session = session_file_path(settings.sessions_dir, uid)
+    tdata = tdata_dir_path(settings.sessions_dir, uid)
+    has_session = session.is_file()
 
-    if path.is_file():
+    if has_session:
+        tdata_note = "есть" if tdata.is_dir() else "нет (только `.session`)"
         await message.answer(
-            "Привет! У тебя уже есть файл сессии для этого Telegram-аккаунта бота.\n\n"
-            f"Файл: `{path.name}`\n\n"
-            "Команды:\n"
-            "/login — войти заново (перезапишет сессию)\n"
-            "/session — получить `.session` файл\n"
-            "/cancel — отменить текущий вход",
+            "Привет! Для твоего аккаунта бота уже сохранены артефакты входа.\n\n"
+            f"• `{session.name}`\n"
+            f"• `tdata`: {tdata_note}\n\n"
+            + _help_lines(True),
             parse_mode="Markdown",
         )
         return
 
     await message.answer(
-        "Привет! Это **демо-бот**: через него можно войти в **свой Telegram-аккаунт** "
-        "и на сервере создаётся файл **`*.session`** (Pyrogram), как в userbot-скриптах.\n\n"
-        "Нажми /login и отправь номер телефона в международном формате, "
-        "например `+79001234567`.\n\n"
-        "⚠️ Демо только для обучения. Файл сессии = полный доступ к аккаунту. "
-        "Не используй на чужих серверах и не передавай файл третьим лицам.",
+        "Привет! **Демо-бот**: вход в **свой Telegram-аккаунт** и сохранение на сервере:\n"
+        "• **`*.session`** — Telethon\n"
+        "• **`tdata`** — формат Telegram Desktop (через opentele)\n\n"
+        + _help_lines(False)
+        + "\n\n⚠️ `.session` и `tdata` дают полный доступ к аккаунту. Только для обучения.",
         parse_mode="Markdown",
     )
 
@@ -80,7 +94,7 @@ async def cmd_login(message: Message, state: FSMContext, settings: Settings) -> 
     uid = message.from_user.id if message.from_user else 0
     await state.clear()
     await _cleanup_pending(uid)
-    _remove_session_files(settings, uid)
+    remove_user_artifacts(settings.sessions_dir, uid)
     await state.set_state(LoginStates.phone)
     await message.answer(
         "Отправь номер телефона аккаунта Telegram (с `+` и кодом страны)."
@@ -104,9 +118,9 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
         return
     except RuntimeError as e:
         if str(e) == "already_authorized":
-            path = session_file_path(settings.sessions_dir, uid)
+            session = session_file_path(settings.sessions_dir, uid)
             await message.answer(
-                f"Сессия уже есть: `{path.name}`. Используй /session или /login.",
+                f"Сессия уже есть: `{session.name}`. /session, /tdata или /login.",
                 parse_mode="Markdown",
             )
             await state.clear()
@@ -178,28 +192,65 @@ async def cmd_session(message: Message, settings: Settings) -> None:
     uid = message.from_user.id if message.from_user else 0
     path = session_file_path(settings.sessions_dir, uid)
     if not path.is_file():
-        await message.answer("Файла сессии ещё нет. Сначала /login")
+        await message.answer("Файла `.session` ещё нет. Сначала /login")
         return
     await message.answer_document(
         FSInputFile(path),
-        caption=f"Файл сессии Pyrogram: `{path.name}`",
+        caption=f"Telethon session: `{path.name}`",
         parse_mode="Markdown",
     )
+
+
+@router.message(Command("tdata"))
+async def cmd_tdata(message: Message, settings: Settings) -> None:
+    uid = message.from_user.id if message.from_user else 0
+    tdata = tdata_dir_path(settings.sessions_dir, uid)
+    if not tdata.is_dir():
+        await message.answer("Папки `tdata` ещё нет. Сначала /login")
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        archive_base = Path(tmp) / f"{tdata.name}"
+        zip_path = shutil.make_archive(str(archive_base), "zip", root_dir=tdata.parent, base_dir=tdata.name)
+        await message.answer_document(
+            FSInputFile(zip_path),
+            caption="Каталог `tdata` (Telegram Desktop). Распакуй и положи рядом с Telegram.exe.",
+            parse_mode="Markdown",
+        )
 
 
 async def _finish_login(
     message: Message, state: FSMContext, uid: int, settings: Settings
 ) -> None:
     pending = _pending.pop(uid, None)
-    if pending:
-        await disconnect_quiet(pending.client)
+    if not pending:
+        await state.clear()
+        await message.answer("Сессия входа истекла. Начни с /login")
+        return
 
-    path = session_file_path(settings.sessions_dir, uid)
+    await message.answer("Вход успешен, сохраняю `.session` и `tdata`…")
+
+    try:
+        session_path, tdata_path = await finalize_login(
+            pending, settings.sessions_dir, uid
+        )
+    except Exception as exc:
+        await disconnect_quiet(pending.client)
+        await state.clear()
+        await message.answer(
+            f"Вход прошёл, но экспорт `tdata` не удался: `{exc}`\n"
+            "Попробуй /login ещё раз или проверь логи на сервере.",
+            parse_mode="Markdown",
+        )
+        return
+
     await state.clear()
     await message.answer(
-        "Вход выполнен. Файл сессии создан на сервере:\n"
-        f"`{path}`\n\n"
-        "Команда /session отправит файл в этот чат.",
+        "Готово.\n\n"
+        f"• `{session_path.name}`\n"
+        f"• `{tdata_path.name}/` (tdata)\n\n"
+        "/session — файл сессии\n"
+        "/tdata — zip с tdata",
         parse_mode="Markdown",
     )
 

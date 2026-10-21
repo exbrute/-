@@ -6,3 +6,4 @@ venv/
 sessions/
 *.session
 *.session-journal
+*_tdata/
