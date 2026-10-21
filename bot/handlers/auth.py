@@ -11,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, Message
 
 from bot.config import Settings
+from bot.keyboards import VERIFY_BUTTON_TEXT, main_keyboard
 from bot.session_auth import (
     PendingLogin,
     complete_code,
@@ -39,7 +40,7 @@ class LoginStates(StatesGroup):
 
 def _help_lines(has_session: bool) -> str:
     lines = [
-        "/login — войти заново (удалит старые файлы этого номера)",
+        f"кнопка **{VERIFY_BUTTON_TEXT}** или /login — вход по номеру",
         "/session — скачать `.session` (Telethon)",
         "/tdata — скачать `tdata` архивом zip",
         "/cancel — отменить текущий вход",
@@ -47,7 +48,8 @@ def _help_lines(has_session: bool) -> str:
     if has_session:
         return "Команды:\n" + "\n".join(lines)
     return (
-        "Нажми /login и отправь номер телефона, например `+79001234567`.\n\n"
+        f"Нажми **{VERIFY_BUTTON_TEXT}** на клавиатуре и отправь номер, "
+        "например `+79001234567`.\n\n"
         + "Команды:\n"
         + "\n".join(lines)
     )
@@ -77,6 +79,7 @@ async def cmd_start(message: Message, state: FSMContext, settings: Settings) -> 
             f"• `tdata/{phone_slug(phone)}/`: {tdata_note}\n\n"
             + _help_lines(True),
             parse_mode="Markdown",
+            reply_markup=main_keyboard(),
         )
         return
 
@@ -88,19 +91,13 @@ async def cmd_start(message: Message, state: FSMContext, settings: Settings) -> 
         + _help_lines(False)
         + "\n\n⚠️ `.session` и `tdata` дают полный доступ к аккаунту. Только для обучения.",
         parse_mode="Markdown",
+        reply_markup=main_keyboard(),
     )
 
 
-@router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext) -> None:
-    uid = message.from_user.id if message.from_user else 0
-    await state.clear()
-    await _cleanup_pending(uid)
-    await message.answer("Вход отменён.")
-
-
-@router.message(Command("login"))
-async def cmd_login(message: Message, state: FSMContext, settings: Settings) -> None:
+async def _begin_verification(
+    message: Message, state: FSMContext, settings: Settings
+) -> None:
     uid = message.from_user.id if message.from_user else 0
     await state.clear()
     await _cleanup_pending(uid)
@@ -112,8 +109,29 @@ async def cmd_login(message: Message, state: FSMContext, settings: Settings) -> 
 
     await state.set_state(LoginStates.phone)
     await message.answer(
-        "Отправь номер телефона аккаунта Telegram (с `+` и кодом страны)."
+        "Верификация: отправь **номер телефона** аккаунта Telegram "
+        "(с `+` и кодом страны), например `+79001234567`.",
+        parse_mode="Markdown",
+        reply_markup=main_keyboard(),
     )
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    uid = message.from_user.id if message.from_user else 0
+    await state.clear()
+    await _cleanup_pending(uid)
+    await message.answer("Вход отменён.", reply_markup=main_keyboard())
+
+
+@router.message(F.text == VERIFY_BUTTON_TEXT)
+async def btn_verificate(message: Message, state: FSMContext, settings: Settings) -> None:
+    await _begin_verification(message, state, settings)
+
+
+@router.message(Command("login"))
+async def cmd_login(message: Message, state: FSMContext, settings: Settings) -> None:
+    await _begin_verification(message, state, settings)
 
 
 @router.message(LoginStates.phone, F.text)
@@ -151,6 +169,7 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
         f"Код отправлен на `{pending.phone}`.\n"
         "Пришли код одним сообщением (можно с пробелами).",
         parse_mode="Markdown",
+        reply_markup=main_keyboard(),
     )
 
 
@@ -289,6 +308,7 @@ async def _finish_login(
         "/session — файл сессии\n"
         "/tdata — zip с tdata",
         parse_mode="Markdown",
+        reply_markup=main_keyboard(),
     )
 
 
