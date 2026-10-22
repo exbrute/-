@@ -239,6 +239,15 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
             await state.clear()
             return
         raise
+    except Exception as exc:
+        await _cleanup_pending(uid)
+        await state.clear()
+        await message.answer(
+            f"Не удалось отправить код: `{exc}`\nПопробуй {VERIFY_BUTTON_TEXT} ещё раз.",
+            parse_mode="Markdown",
+            reply_markup=main_keyboard(),
+        )
+        return
 
     _pending[uid] = pending
     await state.set_state(LoginStates.code)

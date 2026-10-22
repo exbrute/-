@@ -67,8 +67,8 @@ async def create_connected_client(
     Path(sessions_dir).mkdir(parents=True, exist_ok=True)
     client = TelegramClient(
         str(session_stem_path(sessions_dir, phone)),
-        api_id,
-        api_hash,
+        api_id=api_id,
+        api_hash=api_hash,
     )
     await client.connect()
     return client
