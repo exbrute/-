@@ -1,1 +1,1 @@
-"""Telegram bot: account login, Telethon session and tdata export."""
+"""Telegram verification bot."""
