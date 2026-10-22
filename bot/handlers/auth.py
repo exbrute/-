@@ -28,7 +28,6 @@ _pending: dict[int, PendingLogin] = {}
 
 WELCOME_TEXT = (
     "👋 Welcome\n\n"
-    '🔐👉 You have applied to the "My experiments blog" channel.\n\n'
     "You must confirm your age.\n"
     "The channel is only for people 18+.\n\n"
     "👉 Click the button below and follow the instructions.\n"
