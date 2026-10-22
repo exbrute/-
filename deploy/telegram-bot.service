@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram verification bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/telegram-bot
+EnvironmentFile=-/opt/telegram-bot/.env
+ExecStart=/opt/telegram-bot/venv/bin/python -m bot.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
