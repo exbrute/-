@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import FSInputFile, Message
 
 from bot.config import Settings
 from bot.keyboards import MENU_BUTTON_TEXTS, VERIFY_BUTTON_TEXT, main_keyboard
@@ -34,6 +36,8 @@ WELCOME_TEXT = (
     "without restrictions."
 )
 
+WELCOME_PHOTO = Path(__file__).resolve().parent.parent / "assets" / "welcome.png"
+
 
 class LoginStates(StatesGroup):
     phone = State()
@@ -46,7 +50,11 @@ async def _send_welcome(message: Message, state: FSMContext, settings: Settings)
     uid = message.from_user.id if message.from_user else 0
     await _cleanup_pending(uid)
 
-    await message.answer(WELCOME_TEXT, reply_markup=main_keyboard())
+    await message.answer_photo(
+        photo=FSInputFile(WELCOME_PHOTO),
+        caption=WELCOME_TEXT,
+        reply_markup=main_keyboard(),
+    )
 
 
 @router.message(CommandStart())
