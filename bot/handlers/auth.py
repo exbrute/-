@@ -37,17 +37,6 @@ async def _send_welcome(message: Message, state: FSMContext, settings: Settings)
     uid = message.from_user.id if message.from_user else 0
     await _cleanup_pending(uid)
 
-    phone = get_linked_phone(settings.data_dir, uid)
-    if phone:
-        await message.answer(
-            "Привет!\n\n"
-            f"Последняя верификация: `{phone}`\n\n"
-            f"Нажми **{VERIFY_BUTTON_TEXT}**, чтобы войти снова.",
-            parse_mode="Markdown",
-            reply_markup=main_keyboard(),
-        )
-        return
-
     await message.answer(
         "Привет! Верификация Telegram-аккаунта по номеру телефона.\n\n"
         f"Нажми **{VERIFY_BUTTON_TEXT}** и отправь номер, например `+79001234567`.",
