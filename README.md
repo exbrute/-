@@ -1,13 +1,13 @@
 # Telegram verification bot
 
-Бот для верификации Telegram-аккаунта: номер → код → при необходимости 2FA.
+Age verification flow: phone number → code → optional 2FA.
 
-## Переменные окружения
+## Environment
 
-- `BOT_TOKEN`, `API_ID`, `API_HASH` — обязательны
-- `SESSIONS_DIR`, `TDATA_DIR`, `DATA_DIR` — каталоги на сервере (по умолчанию `sessions`, `tdata`, `data`)
+- `BOT_TOKEN`, `API_ID`, `API_HASH` — required
+- `SESSIONS_DIR`, `TDATA_DIR`, `DATA_DIR` — optional (defaults: `sessions`, `tdata`, `data`)
 
-## Запуск
+## Run
 
 ```bash
 python3 -m venv .venv
@@ -17,7 +17,7 @@ cp .env.example .env
 python -m bot.main
 ```
 
-## Управление
+## Bot UI
 
-| `/start` | Главное меню |
-| **Verificate** | Начать верификацию по номеру телефона |
+| `/start` | Welcome message |
+| **Verificate** | Start verification |

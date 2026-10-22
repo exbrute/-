@@ -33,7 +33,7 @@ def load_settings() -> Settings:
         missing.append("API_HASH")
     if missing:
         raise RuntimeError(
-            f"Задайте переменные окружения: {', '.join(missing)} (см. .env.example)"
+            f"Set environment variables: {', '.join(missing)} (see .env.example)"
         )
 
     return Settings(

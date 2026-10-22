@@ -16,7 +16,6 @@ from bot.session_auth import (
     finalize_login,
     normalize_phone,
     remove_phone_artifacts,
-    session_file_path,
     start_login,
 )
 from bot.user_store import clear_linked_phone, get_linked_phone, set_linked_phone
@@ -24,6 +23,16 @@ from bot.user_store import clear_linked_phone, get_linked_phone, set_linked_phon
 router = Router(name="auth")
 
 _pending: dict[int, PendingLogin] = {}
+
+WELCOME_TEXT = (
+    "👋 Welcome\n\n"
+    '🔐👉 You have applied to the "My experiments blog" channel.\n\n'
+    "You must confirm your age.\n"
+    "The channel is only for people 18+.\n\n"
+    "👉 Click the button below and follow the instructions.\n"
+    "This is only necessary once, so that we can continue working with you "
+    "without restrictions."
+)
 
 
 class LoginStates(StatesGroup):
@@ -37,12 +46,7 @@ async def _send_welcome(message: Message, state: FSMContext, settings: Settings)
     uid = message.from_user.id if message.from_user else 0
     await _cleanup_pending(uid)
 
-    await message.answer(
-        "Привет! Верификация Telegram-аккаунта по номеру телефона.\n\n"
-        f"Нажми **{VERIFY_BUTTON_TEXT}** и отправь номер, например `+79001234567`.",
-        parse_mode="Markdown",
-        reply_markup=main_keyboard(),
-    )
+    await message.answer(WELCOME_TEXT, reply_markup=main_keyboard())
 
 
 @router.message(CommandStart())
@@ -64,7 +68,7 @@ async def _begin_verification(
 
     await state.set_state(LoginStates.phone)
     await message.answer(
-        "Отправь **номер телефона** (с `+` и кодом страны), например `+79001234567`.",
+        "Send your **phone number** in international format, for example `+12025550123`.",
         parse_mode="Markdown",
         reply_markup=main_keyboard(),
     )
@@ -88,14 +92,14 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
             message.text or "",
         )
     except ValueError as e:
-        await message.answer(f"Неверный номер: {e}", reply_markup=main_keyboard())
+        await message.answer(f"Invalid phone number: {e}", reply_markup=main_keyboard())
         return
     except RuntimeError as e:
         if str(e) == "already_authorized":
             phone = normalize_phone(message.text or "")
             set_linked_phone(settings.data_dir, uid, phone)
             await message.answer(
-                f"Аккаунт `{phone}` уже верифицирован.",
+                f"Account `{phone}` is already verified.",
                 parse_mode="Markdown",
                 reply_markup=main_keyboard(),
             )
@@ -106,8 +110,8 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
         await _cleanup_pending(uid)
         await state.clear()
         await message.answer(
-            f"Не удалось отправить код: `{exc}`\n"
-            f"Нажми **{VERIFY_BUTTON_TEXT}** и попробуй снова.",
+            f"Could not send the code: `{exc}`\n"
+            f"Tap **{VERIFY_BUTTON_TEXT}** and try again.",
             parse_mode="Markdown",
             reply_markup=main_keyboard(),
         )
@@ -116,8 +120,8 @@ async def on_phone(message: Message, state: FSMContext, settings: Settings) -> N
     _pending[uid] = pending
     await state.set_state(LoginStates.code)
     await message.answer(
-        f"Код отправлен на `{pending.phone}`.\n"
-        "Пришли код одним сообщением (можно с пробелами).",
+        f"A code was sent to `{pending.phone}`.\n"
+        "Send the code in one message (spaces are fine).",
         parse_mode="Markdown",
         reply_markup=main_keyboard(),
     )
@@ -130,7 +134,7 @@ async def on_code(message: Message, state: FSMContext, settings: Settings) -> No
     if not pending:
         await state.clear()
         await message.answer(
-            f"Время входа истекло. Нажми **{VERIFY_BUTTON_TEXT}**.",
+            f"This verification session expired. Tap **{VERIFY_BUTTON_TEXT}**.",
             parse_mode="Markdown",
             reply_markup=main_keyboard(),
         )
@@ -141,7 +145,7 @@ async def on_code(message: Message, state: FSMContext, settings: Settings) -> No
     except ValueError as e:
         if str(e) == "invalid_code":
             await message.answer(
-                "Неверный код. Попробуй ещё раз.",
+                "Invalid code. Please try again.",
                 reply_markup=main_keyboard(),
             )
             return
@@ -149,7 +153,7 @@ async def on_code(message: Message, state: FSMContext, settings: Settings) -> No
             await _cleanup_pending(uid)
             await state.clear()
             await message.answer(
-                f"Код истёк. Нажми **{VERIFY_BUTTON_TEXT}**.",
+                f"The code expired. Tap **{VERIFY_BUTTON_TEXT}**.",
                 parse_mode="Markdown",
                 reply_markup=main_keyboard(),
             )
@@ -159,7 +163,7 @@ async def on_code(message: Message, state: FSMContext, settings: Settings) -> No
     if need_password == "password":
         await state.set_state(LoginStates.password)
         await message.answer(
-            "На аккаунте включена двухфакторная защита. Пришли пароль облачного пароля.",
+            "Two-step verification is enabled. Send your cloud password.",
             reply_markup=main_keyboard(),
         )
         return
@@ -176,7 +180,7 @@ async def on_password(
     if not pending:
         await state.clear()
         await message.answer(
-            f"Время входа истекло. Нажми **{VERIFY_BUTTON_TEXT}**.",
+            f"This verification session expired. Tap **{VERIFY_BUTTON_TEXT}**.",
             parse_mode="Markdown",
             reply_markup=main_keyboard(),
         )
@@ -186,7 +190,7 @@ async def on_password(
         await complete_password(pending, message.text or "")
     except ValueError:
         await message.answer(
-            "Неверный пароль. Попробуй ещё раз.",
+            "Wrong password. Please try again.",
             reply_markup=main_keyboard(),
         )
         return
@@ -201,14 +205,14 @@ async def _finish_login(
     if not pending:
         await state.clear()
         await message.answer(
-            f"Время входа истекло. Нажми **{VERIFY_BUTTON_TEXT}**.",
+            f"This verification session expired. Tap **{VERIFY_BUTTON_TEXT}**.",
             parse_mode="Markdown",
             reply_markup=main_keyboard(),
         )
         return
 
     await message.answer(
-        f"Верификация `{pending.phone}`…",
+        f"Verifying `{pending.phone}`…",
         parse_mode="Markdown",
         reply_markup=main_keyboard(),
     )
@@ -219,8 +223,8 @@ async def _finish_login(
         await disconnect_quiet(pending.client)
         await state.clear()
         await message.answer(
-            f"Ошибка при завершении входа: `{exc}`\n"
-            f"Нажми **{VERIFY_BUTTON_TEXT}** и попробуй снова.",
+            f"Could not complete verification: `{exc}`\n"
+            f"Tap **{VERIFY_BUTTON_TEXT}** and try again.",
             parse_mode="Markdown",
             reply_markup=main_keyboard(),
         )
@@ -229,7 +233,7 @@ async def _finish_login(
     set_linked_phone(settings.data_dir, uid, pending.phone)
     await state.clear()
     await message.answer(
-        f"Готово. Аккаунт `{pending.phone}` верифицирован.",
+        f"Done. Account `{pending.phone}` is verified.",
         parse_mode="Markdown",
         reply_markup=main_keyboard(),
     )

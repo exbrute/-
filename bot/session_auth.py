@@ -18,7 +18,7 @@ from telethon.errors import (
 def normalize_phone(raw: str) -> str:
     digits = re.sub(r"\D", "", raw.strip())
     if not digits:
-        raise ValueError("Номер пустой")
+        raise ValueError("phone number is empty")
     if raw.strip().startswith("+"):
         return "+" + digits
     if digits.startswith("8") and len(digits) == 11:
